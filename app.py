@@ -1,8 +1,9 @@
 """
-IGNITE Hub — Enterprise Edition
+IGNITE Hub — Global Market Intelligence
 =============================================================
 A unified, production-grade Streamlit application combining
 Deep Macro Momentum Analysis and Candlestick Reversal Signal Engines.
+Featuring a universal text search box for all yfinance assets.
 
 Run:
     streamlit run app.py
@@ -22,7 +23,7 @@ import yfinance as yf
 # PAGE CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="IGNITE Hub — Market Intelligence",
+    page_title="IGNITE Hub — Global Search Engine",
     page_icon="🔥",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -105,19 +106,6 @@ st.markdown(
     max-width: 680px;
 }
 
-/* ── Indicator pills ──────────────────────────────────────────────────── */
-.pill-row { display: flex; gap: 0.6rem; margin-top: 0.9rem; flex-wrap: wrap; }
-.pill {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 0.72rem;
-    padding: 0.28rem 0.75rem;
-    border-radius: 6px;
-    border: 1px solid rgba(128,128,128,0.25);
-    background: rgba(128,128,128,0.07);
-    opacity: 0.85;
-}
-.pill b { opacity: 1; }
-
 /* ── Section divider label ────────────────────────────────────────────── */
 .section-label {
     font-size: 0.65rem;
@@ -169,37 +157,13 @@ st.markdown(
     max-height: 120px;
     overflow-y: auto;
 }
-
-/* ── Analytics stat cards ─────────────────────────────────────────────── */
-.stat-card {
-    border: 1px solid rgba(128,128,128,0.15);
-    border-radius: 10px;
-    padding: 0.85rem 1rem;
-    text-align: center;
-    background: rgba(128,128,128,0.04);
-}
-.stat-value {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 1.2rem;
-    font-weight: 700;
-}
-.stat-label {
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    opacity: 0.4;
-    margin-top: 0.2rem;
-}
-.green-val { color: #16a34a; }
-.red-val   { color: #dc2626; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DATACLASSES & LOOKUPS
+# DATACLASSES & CONFIG CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 @dataclass
 class CandleMetrics:
@@ -212,26 +176,10 @@ class CandleMetrics:
 class Signal:
     direction: str; confidence: str; reasons: List[str]
 
-PRESET_TICKERS = {
-    "BTC-USD       — Bitcoin": "BTC-USD",
-    "ETH-USD       — Ethereum": "ETH-USD",
-    "RELIANCE.NS  — Reliance Industries": "RELIANCE.NS",
-    "TCS.NS       — Tata Consultancy Services": "TCS.NS",
-    "INFY.NS      — Infosys": "INFY.NS",
-    "HDFCBANK.NS  — HDFC Bank": "HDFCBANK.NS",
-    "TATAMOTORS.NS — Tata Motors": "TATAMOTORS.NS",
-    "AAPL         — Apple": "AAPL",
-    "MSFT         — Microsoft": "MSFT",
-    "GOOGL        — Alphabet (Google)": "GOOGL",
-    "NVDA         — NVIDIA", "TSLA         — Tesla": "TSLA",
-    "AMZN         — Amazon": "AMZN",
-    "SPY          — S&P 500 ETF": "SPY",
-}
-
 INTERVALS = {
-    "1 minute": ("1m", "1d"),
     "5 minutes": ("5m", "5d"),
     "15 minutes": ("15m", "5d"),
+    "Hourly": ("1h", "7d"),
     "Daily (Default Macro)": ("1d", "120d")
 }
 
@@ -242,10 +190,11 @@ VOLUME_DROP_RATIO = 0.85
 VOLUME_SPIKE_RATIO = 1.25
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CORE UTILITY FUNCTIONS
+# CORE API UTILITY FUNCTIONS (GLOBAL LIVE API FETCHING)
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
-def search_symbols(query: str, max_results: int = 8) -> List[dict]:
+def search_symbols(query: str, max_results: int = 10) -> List[dict]:
+    """Queries the live yfinance search dictionary index using plain text."""
     query = (query or "").strip()
     if len(query) < 1: return []
     try:
@@ -289,12 +238,8 @@ def format_market_cap(cap: Optional[float]) -> tuple[str, str]:
         return f"${val:.2f} B", "Large-cap" if val >= 10 else ("Mid-cap" if val >= 2 else "Small-cap")
     return f"${cap:,.0f}", "Micro-cap"
 
-def fmt(value, fmt_str: str = ",.2f", fallback: str = "N/A") -> str:
-    try: return fallback if value is None else format(float(value), fmt_str)
-    except: return fallback
-
 # ══════════════════════════════════════════════════════════════════════════════
-# RULE ENGINES
+# ALGORITHMIC RULE ENGINES
 # ══════════════════════════════════════════════════════════════════════════════
 def momentum_signal(price: float, ema20: float, rsi: float) -> dict:
     above_ema = price > ema20
@@ -356,49 +301,54 @@ def run_ignite_algorithm(m: CandleMetrics) -> Signal:
     return Signal("HOLD", "Low", [f"Indecisive standard distribution frame. Body ratio holds {m.body_pct:.1f}% context.", "Volume metrics stable near historical baseline averages."])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MAIN APPLICATION INTERFACE
+# MAIN USER INTERFACE & SESSION ARCHITECTURE
 # ══════════════════════════════════════════════════════════════════════════════
 st.title("🔥 IGNITE Analytics Suite")
-st.caption("Integrated Core: Macro Momentum Gauges, Corporate Profiling & Candlestick Signal Frameworks")
+st.caption("Universal Engine: Plain-Text Asset Search, Macro Momentum Gauges & Candlestick Anatomy Parser")
 
-st.warning("**⚠️ Educational Use Architecture Only — Not Core Financial Advice.** past performance profiles contain dynamic risks.", icon="⚠️")
+st.warning("**⚠️ Educational Use Architecture Only — Not Core Financial Advice.** Parameters evaluate mathematical probabilities.", icon="⚠️")
 st.divider()
 
-# SYSTEM STATE SYMBOL CONTEXT MANAGEMENT
-if "selected_symbol" not in st.session_state:
-    st.session_state.selected_symbol = "BTC-USD"
-    st.session_state.selected_name = "Bitcoin"
+# INITIAL SESSION STATES FOR THE APP HANDOFF
+if "current_ticker" not in st.session_state:
+    st.session_state.current_ticker = "RELIANCE.NS"
+    st.session_state.current_title = "Reliance Industries Limited"
 
-# DUAL UNIFIED TICKER CONTROLS
-st.markdown('<div class="section-label">Asset Discovery Engine</div>', unsafe_allow_html=True)
-col_preset, col_search = st.columns([2, 2])
+# UNIVERSAL PLAIN TEXT SEARCH INPUT CONTROL
+st.markdown('<div class="section-label">Universal Global Stock Search</div>', unsafe_allow_html=True)
+user_text_search = st.text_input(
+    "Search for any global stock, crypto, or commodity by name:", 
+    placeholder="Type company name here... (e.g., Tata Motors, Reliance, Apple, Google, Nifty, Gold)"
+)
 
-with col_preset:
-    preset_label = st.selectbox("Quick-Load Core Presets", ["— Access Search Index Box —"] + list(PRESET_TICKERS.keys()), index=1)
-    if not preset_label.startswith("—"):
-        st.session_state.selected_symbol = PRESET_TICKERS[preset_label]
-        st.session_state.selected_name = preset_label.split("—")[1].strip()
+# ENGINE PROCESSOR FOR USER INPUTS
+if user_text_search.strip():
+    search_results = search_symbols(user_text_search)
+    if search_results:
+        st.markdown("**Select the exact match from the market directory:**")
+        # Radio choice array for simple reading
+        chosen_index = st.radio(
+            "Found Matches:",
+            range(len(search_results)),
+            format_func=lambda i: f"{search_results[i]['name']} [{search_results[i]['symbol']}]",
+            horizontal=True
+        )
+        if st.button("Analyze Selected Asset", use_container_width=True):
+            st.session_state.current_ticker = search_results[chosen_index]["symbol"]
+            st.session_state.current_title = search_results[chosen_index]["name"]
+            st.success(f"Successfully connected to active pipeline stream for: {st.session_state.current_title}")
+    else:
+        st.error("No active corporate database entries matched that search text. Try adjusting terms.")
 
-with col_search:
-    query = st.text_input("Deep Search Index Engine", placeholder="Type Name or Ticker (e.g. Reliance, Tata, Apple, Gold)")
-    if query.strip():
-        matches = search_symbols(query)
-        if matches:
-            idx = st.radio("Search Match Arrays", range(len(matches)), format_func=lambda i: f"{matches[i]['name']} ({matches[i]['symbol']})", horizontal=True)
-            if st.button("Confirm Dynamic Switch", use_container_width=True):
-                st.session_state.selected_symbol = matches[idx]["symbol"]
-                st.session_state.selected_name = matches[idx]["name"]
-        else:
-            st.caption("No valid search arrays detected.")
+ticker = st.session_state.current_ticker
+company_display_name = st.session_state.current_title
 
-ticker = st.session_state.selected_symbol
-company_display_name = st.session_state.selected_name
-st.markdown(f"**Active Operations Context Vector:** `{ticker}` ({company_display_name})")
+st.info(f"📊 **Currently Analyzing:** `{ticker}` — **{company_display_name}**")
 
 # DUAL ROUTING DASHBOARD TABS
 tab_macro, tab_ignite = st.tabs(["📈 Macro Momentum & Profile", "🔥 IGNITE Candlestick Analysis"])
 
-# FETCH MACRO RECONCILIATION BASES
+# DATA PIPELINE BACKENDS
 macro_df = fetch_raw_data(ticker, "1d", "120d")
 info_dict = fetch_info(ticker)
 
@@ -407,7 +357,7 @@ info_dict = fetch_info(ticker)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_macro:
     if macro_df.empty or "Close" not in macro_df.columns:
-        st.error("Macro structural historical matrices missing for this asset architecture.")
+        st.error(f"Macro historical timeline data is unavailable for `{ticker}` on standard daily durations.")
     else:
         close_series = macro_df["Close"].dropna()
         volume_series = macro_df["Volume"] if "Volume" in macro_df.columns else pd.Series(dtype=float)
@@ -423,7 +373,7 @@ with tab_macro:
         prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else l_pr
         change, chg_pct = l_pr - prev_close, ((l_pr - prev_close)/prev_close)*100
         
-        # RENDERING KEY PERFORMANCES
+        # RENDERING RECONCILED PERFORMANCES
         st.markdown('<div class="section-label">Key Metrics Dashboard</div>', unsafe_allow_html=True)
         k1, k2, k3, k4, k5, k6 = st.columns(6)
         
@@ -438,7 +388,7 @@ with tab_macro:
         k5.markdown(f'<div class="kpi-card"><div class="kpi-label">EMA-20 Base</div><div class="kpi-value">{l_ema:,.2f}</div><div class="kpi-sub">{"▲ Above" if l_pr >= l_ema else "▼ Below"}</div></div>', unsafe_allow_html=True)
         k6.markdown(f'<div class="kpi-card"><div class="kpi-label">RSI-14 Index</div><div class="kpi-value">{l_rsi:.1f}</div><div class="kpi-sub">Normalized Velocity</div></div>', unsafe_allow_html=True)
         
-        # THREE TIER SIGNAL BOX
+        # MOMENTUM FRAME CLASSIFICATION
         st.markdown('<div class="section-label">Momentum Classification Signal</div>', unsafe_allow_html=True)
         sig = momentum_signal(l_pr, l_ema, l_rsi)
         st.markdown(
@@ -448,7 +398,7 @@ with tab_macro:
             unsafe_allow_html=True
         )
         
-        # PLOTLY INTERACTIVE BUILD
+        # CHART INTERFACES
         st.markdown('<div class="section-label">Macro Price Distributions</div>', unsafe_allow_html=True)
         c_e, c_s = st.checkbox("Toggle Overlay: EMA-20", True), st.checkbox("Toggle Overlay: SMA-50", True)
         
@@ -459,7 +409,7 @@ with tab_macro:
         fig_price.update_layout(hovermode="x unified", margin=dict(l=0,r=0,t=20,b=0), height=340, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_price, use_container_width=True)
         
-        # PROFILE GRID RENDERING
+        # PROFILE FIELDS RENDERING
         st.markdown('<div class="section-label">Enterprise Profile Summary</div>', unsafe_allow_html=True)
         p_items = [
             ("Sector Structuring", info_dict.get("sector", "N/A")), ("Industry Segment", info_dict.get("industry", "N/A")),
@@ -480,7 +430,7 @@ with tab_ignite:
     
     col_i, col_ref = st.columns([2, 2])
     with col_i:
-        int_label = st.selectbox("Intraday Pipeline Resolution Interval", list(INTERVALS.keys()), index=1)
+        int_label = st.selectbox("Intraday Pipeline Resolution Interval", list(INTERVALS.keys()), index=3)
         sel_interval, sel_period = INTERVALS[int_label]
     with col_ref:
         st.write("")
@@ -491,7 +441,7 @@ with tab_ignite:
         ignite_df = fetch_raw_data(ticker, sel_interval, sel_period)
         
     if ignite_df is None or ignite_df.empty or len(ignite_df) < VOLUME_LOOKBACK + 2:
-        st.error("Insufficient high-frequency ticks available inside current parameters. Change Interval filters.")
+        st.error(f"Insufficient granularity ticks inside `{sel_interval}` parameters for asset `{ticker}`. Please switch interval mapping.")
     else:
         c_m = compute_candle_metrics(ignite_df)
         candle_signal = run_ignite_algorithm(c_m)
@@ -499,7 +449,6 @@ with tab_ignite:
         i_left, i_right = st.columns([1.2, 2.2])
         
         with i_left:
-            # CUSTOM IGNITE SIGNAL BADGE SYSTEM
             b_palette = {"UP": ("#0e7c5f", "🟢 BUY / REVERSAL CONTEXT"), "DOWN": ("#8f1e1e", "🔴 DISTRIBUTION EXHAUSTION"), "HOLD": ("#8a6d1a", "🟡 CONSOLIDATION HOLD")}
             bg_c, lbl_s = b_palette.get(candle_signal.direction, ("#444444", candle_signal.direction))
             
@@ -523,19 +472,16 @@ with tab_ignite:
             })
             
         with i_right:
-            # INTERACTIVE METRICS ROW
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Body Distribution %", f"{c_m.body_pct:.1f}%")
             m2.metric("Upper Wick Target %", f"{c_m.upper_wick_pct:.1f}%")
             m3.metric("Lower Wick Base %", f"{c_m.lower_wick_pct:.1f}%")
             m4.metric("Volume Drift Delta", f"{c_m.volume_ratio*100:.0f}%")
             
-            # CANDLESTICK GRAPH
             fig_cand = go.Figure()
             tail_df = ignite_df.tail(45)
             fig_cand.add_trace(go.Candlestick(x=tail_df["Time"], open=tail_df["Open"], high=tail_df["High"], low=tail_df["Low"], close=tail_df["Close"], name="OHLC Vitals"))
             
-            # Vertical Target Band Highlighting Last Completed Candle
             t_last = tail_df["Time"].iloc[-1]
             fig_cand.add_vrect(x0=t_last, x1=t_last, line_width=4, line_color=bg_c, opacity=0.4)
             fig_cand.update_layout(xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10,r=10,t=10,b=10), height=400)
@@ -545,4 +491,4 @@ with tab_ignite:
 # FOOTER TERMINAL
 # ══════════════════════════════════════════════════════════════════════════════
 st.divider()
-st.caption("🔒 Architecture Pipeline complete. System active under sandbox deployment parameters. Financial data streams powered by open-source yfinance abstractions.")
+st.caption("🔒 Architecture Pipeline complete. Open search parameters activated across whole global index repositories via yfinance abstraction frameworks.")
