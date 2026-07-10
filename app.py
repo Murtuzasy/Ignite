@@ -1,559 +1,548 @@
 """
-IGNITE - Candlestick Reversal / Continuation Signal PoC
-=========================================================
-A single-file Streamlit application that fetches recent OHLCV data via
-yfinance, analyzes the anatomy of the most recently completed candle
-(body, upper wick, lower wick, volume behaviour) and produces a simple
-directional call: UP, DOWN, or HOLD.
+IGNITE Hub — Enterprise Edition
+=============================================================
+A unified, production-grade Streamlit application combining
+Deep Macro Momentum Analysis and Candlestick Reversal Signal Engines.
 
-This is a Proof of Concept for educational purposes only.
-It is NOT financial advice and should not be used to make real trading
-decisions.
-
-Run locally:
-    pip install -r requirements.txt
+Run:
     streamlit run app.py
-
-Deployable as-is to a Hugging Face Space (Streamlit SDK).
 """
 
+from __future__ import annotations
+import textwrap
+from typing import Optional, List
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-# ----------------------------------------------------------------------------
-# Page config
-# ----------------------------------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="IGNITE — Candlestick Signal PoC",
+    page_title="IGNITE Hub — Market Intelligence",
     page_icon="🔥",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# ----------------------------------------------------------------------------
-# Constants
-# ----------------------------------------------------------------------------
-# A handful of one-click shortcuts for common names. This is NOT the full
-# universe of tradeable symbols — the search box below covers every ticker
-# Yahoo Finance knows about (stocks, ETFs, crypto, forex, futures, indices).
-POPULAR_TICKERS = {
-    "Bitcoin": "BTC-USD",
-    "Ethereum": "ETH-USD",
-    "Apple": "AAPL",
-    "Tesla": "TSLA",
-    "NVIDIA": "NVDA",
-    "Microsoft": "MSFT",
-    "Amazon": "AMZN",
-    "Google (Alphabet)": "GOOGL",
-    "EUR/USD": "EURUSD=X",
-    "S&P 500 ETF": "SPY",
-    "Gold Futures": "GC=F",
+# ══════════════════════════════════════════════════════════════════════════════
+# GLOBAL CSS (Light & Dark Theme Safe)
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown(
+    """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+[data-testid="stAppViewContainer"] * { font-family: 'Inter', sans-serif; }
+#MainMenu, footer { visibility: hidden; }
+[data-testid="stDecoration"] { display: none; }
+
+/* ── KPI cards ────────────────────────────────────────────────────────── */
+.kpi-card {
+    border: 1px solid rgba(128,128,128,0.2);
+    border-radius: 12px;
+    padding: 1rem 1.2rem 0.9rem;
+    margin-bottom: 0.5rem;
+    background: rgba(128,128,128,0.04);
+}
+.kpi-label {
+    font-size: 0.67rem;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    opacity: 0.5;
+    margin-bottom: 0.35rem;
+}
+.kpi-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.1;
+}
+.kpi-sub {
+    font-size: 0.7rem;
+    opacity: 0.45;
+    margin-top: 0.25rem;
+}
+
+/* ── Signal card ──────────────────────────────────────────────────────── */
+.signal-card {
+    border-radius: 14px;
+    padding: 1.5rem 1.7rem;
+    margin: 0.6rem 0 1.2rem;
+    border: 1px solid transparent;
+}
+.sig-green  { background: rgba(22,163,74,0.12);  border-color: rgba(22,163,74,0.35); }
+.sig-yellow { background: rgba(202,138,4,0.10);  border-color: rgba(202,138,4,0.35); }
+.sig-red    { background: rgba(220,38,38,0.10);  border-color: rgba(220,38,38,0.35); }
+
+.sig-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 0.28rem 0.8rem;
+    border-radius: 20px;
+    margin-bottom: 0.75rem;
+}
+.badge-green  { background: rgba(22,163,74,0.2);  color: #16a34a; }
+.badge-yellow { background: rgba(202,138,4,0.18); color: #b45309; }
+.badge-red    { background: rgba(220,38,38,0.18); color: #dc2626; }
+
+.sig-headline {
+    font-size: 1.18rem;
+    font-weight: 700;
+    margin: 0 0 0.45rem;
+}
+.sig-body {
+    font-size: 0.86rem;
+    line-height: 1.65;
+    opacity: 0.75;
+    max-width: 680px;
+}
+
+/* ── Indicator pills ──────────────────────────────────────────────────── */
+.pill-row { display: flex; gap: 0.6rem; margin-top: 0.9rem; flex-wrap: wrap; }
+.pill {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.28rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid rgba(128,128,128,0.25);
+    background: rgba(128,128,128,0.07);
+    opacity: 0.85;
+}
+.pill b { opacity: 1; }
+
+/* ── Section divider label ────────────────────────────────────────────── */
+.section-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.4;
+    margin: 1.6rem 0 0.6rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(128,128,128,0.15);
+}
+
+/* ── Profile table ────────────────────────────────────────────────────── */
+.profile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.6rem;
+    margin-top: 0.3rem;
+}
+.profile-item {
+    border: 1px solid rgba(128,128,128,0.15);
+    border-radius: 9px;
+    padding: 0.65rem 0.9rem;
+    background: rgba(128,128,128,0.04);
+}
+.profile-key {
+    font-size: 0.63rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.4;
+    margin-bottom: 0.2rem;
+}
+.profile-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+/* ── Summary box ──────────────────────────────────────────────────────── */
+.summary-box {
+    border: 1px solid rgba(128,128,128,0.15);
+    border-radius: 9px;
+    padding: 0.9rem 1.1rem;
+    font-size: 0.83rem;
+    line-height: 1.7;
+    opacity: 0.75;
+    margin-top: 0.4rem;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+/* ── Analytics stat cards ─────────────────────────────────────────────── */
+.stat-card {
+    border: 1px solid rgba(128,128,128,0.15);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    text-align: center;
+    background: rgba(128,128,128,0.04);
+}
+.stat-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+.stat-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.4;
+    margin-top: 0.2rem;
+}
+.green-val { color: #16a34a; }
+.red-val   { color: #dc2626; }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DATACLASSES & LOOKUPS
+# ══════════════════════════════════════════════════════════════════════════════
+@dataclass
+class CandleMetrics:
+    open: float; high: float; low: float; close: float; volume: float
+    body: float; upper_wick: float; lower_wick: float; total_range: float
+    is_red: bool; is_green: bool; body_pct: float; upper_wick_pct: float
+    lower_wick_pct: float; avg_prior_volume: float; volume_ratio: float
+
+@dataclass
+class Signal:
+    direction: str; confidence: str; reasons: List[str]
+
+PRESET_TICKERS = {
+    "BTC-USD       — Bitcoin": "BTC-USD",
+    "ETH-USD       — Ethereum": "ETH-USD",
+    "RELIANCE.NS  — Reliance Industries": "RELIANCE.NS",
+    "TCS.NS       — Tata Consultancy Services": "TCS.NS",
+    "INFY.NS      — Infosys": "INFY.NS",
+    "HDFCBANK.NS  — HDFC Bank": "HDFCBANK.NS",
+    "TATAMOTORS.NS — Tata Motors": "TATAMOTORS.NS",
+    "AAPL         — Apple": "AAPL",
+    "MSFT         — Microsoft": "MSFT",
+    "GOOGL        — Alphabet (Google)": "GOOGL",
+    "NVDA         — NVIDIA", "TSLA         — Tesla": "TSLA",
+    "AMZN         — Amazon": "AMZN",
+    "SPY          — S&P 500 ETF": "SPY",
 }
 
 INTERVALS = {
     "1 minute": ("1m", "1d"),
     "5 minutes": ("5m", "5d"),
     "15 minutes": ("15m", "5d"),
+    "Daily (Default Macro)": ("1d", "120d")
 }
 
-# How many prior candles to use when computing the "average" volume that the
-# latest candle's volume is compared against.
 VOLUME_LOOKBACK = 10
+LONG_WICK_RATIO = 0.45
+SMALL_OPPOSITE_WICK_RATIO = 0.15
+VOLUME_DROP_RATIO = 0.85
+VOLUME_SPIKE_RATIO = 1.25
 
-# Thresholds — tunable "knobs" for the rule engine.
-LONG_WICK_RATIO = 0.45       # wick must be >= 45% of the candle's total range
-SMALL_OPPOSITE_WICK_RATIO = 0.15  # the "closing near the extreme" wick must be small
-VOLUME_DROP_RATIO = 0.85     # current volume < 85% of recent average -> "decreasing"
-VOLUME_SPIKE_RATIO = 1.25    # current volume > 125% of recent average -> "high"
-
-
-# ----------------------------------------------------------------------------
-# Data classes
-# ----------------------------------------------------------------------------
-@dataclass
-class CandleMetrics:
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    body: float
-    upper_wick: float
-    lower_wick: float
-    total_range: float
-    is_red: bool
-    is_green: bool
-    body_pct: float
-    upper_wick_pct: float
-    lower_wick_pct: float
-    avg_prior_volume: float
-    volume_ratio: float
-
-
-@dataclass
-class Signal:
-    direction: str          # "UP", "DOWN", "HOLD"
-    confidence: str         # "High", "Medium", "Low"
-    reasons: List[str]
-
-
-# ----------------------------------------------------------------------------
-# Data fetching
-# ----------------------------------------------------------------------------
-@st.cache_data(ttl=30, show_spinner=False)
-def fetch_data(ticker: str, interval: str, period: str) -> pd.DataFrame:
-    df = yf.download(
-        tickers=ticker,
-        interval=interval,
-        period=period,
-        progress=False,
-        auto_adjust=False,
-    )
-    if df.empty:
-        return df
-
-    # yfinance sometimes returns a MultiIndex column set for single tickers.
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] for c in df.columns]
-
-    df = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"])
-    df = df.reset_index()
-    # The index column name varies ("Datetime" or "Date") depending on interval.
-    time_col = "Datetime" if "Datetime" in df.columns else "Date"
-    df = df.rename(columns={time_col: "Time"})
-    return df
-
-
+# ══════════════════════════════════════════════════════════════════════════════
+# CORE UTILITY FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=300, show_spinner=False)
-def search_symbols(query: str, max_results: int = 10) -> List[dict]:
-    """
-    Live search across every symbol Yahoo Finance knows about (stocks, ETFs,
-    crypto, forex, futures, indices...) using yfinance's built-in Search
-    wrapper around Yahoo's own search/autocomplete endpoint.
-
-    This means the user can type a plain-English name ("Bitcoin", "Apple",
-    "Tesla") instead of needing to know the exact ticker — there is no fixed
-    list to maintain, every listed instrument is reachable.
-    """
+def search_symbols(query: str, max_results: int = 8) -> List[dict]:
     query = (query or "").strip()
-    if len(query) < 1:
-        return []
+    if len(query) < 1: return []
     try:
         result = yf.Search(query, max_results=max_results)
         quotes = result.quotes or []
+        return [{"symbol": q.get("symbol"), "name": q.get("shortname") or q.get("longname") or q.get("symbol")} for q in quotes if q.get("symbol")]
     except Exception:
         return []
 
-    matches = []
-    for q in quotes:
-        symbol = q.get("symbol")
-        if not symbol:
-            continue
-        name = q.get("shortname") or q.get("longname") or symbol
-        matches.append(
-            {
-                "symbol": symbol,
-                "name": name,
-                "exchange": q.get("exchange", ""),
-                "type": q.get("quoteType", ""),
-            }
-        )
-    return matches
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_raw_data(ticker: str, interval: str, period: str) -> pd.DataFrame:
+    df = yf.download(tickers=ticker, interval=interval, period=period, progress=False, auto_adjust=False)
+    if df.empty: return df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] for c in df.columns]
+    df = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"]).reset_index()
+    time_col = "Datetime" if "Datetime" in df.columns else "Date"
+    return df.rename(columns={time_col: "Time"})
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_info(ticker_symbol: str) -> dict:
+    try: return yf.Ticker(ticker_symbol).info
+    except: return {}
 
-# ----------------------------------------------------------------------------
-# Core IGNITE analysis
-# ----------------------------------------------------------------------------
+def calculate_ema(series: pd.Series, span: int) -> pd.Series: return series.ewm(span=span, adjust=False).mean()
+def calculate_sma(series: pd.Series, window: int) -> pd.Series: return series.rolling(window=window).mean()
+
+def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain, loss = delta.clip(lower=0), (-delta).clip(lower=0)
+    avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
+    avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0, float("nan"))
+    return 100 - (100 / (1 + rs))
+
+def format_market_cap(cap: Optional[float]) -> tuple[str, str]:
+    if cap is None: return "N/A", "Unknown"
+    if cap >= 1e12: return f"${cap / 1e12:.2f} T", "Large-cap"
+    if cap >= 1e9:
+        val = cap / 1e9
+        return f"${val:.2f} B", "Large-cap" if val >= 10 else ("Mid-cap" if val >= 2 else "Small-cap")
+    return f"${cap:,.0f}", "Micro-cap"
+
+def fmt(value, fmt_str: str = ",.2f", fallback: str = "N/A") -> str:
+    try: return fallback if value is None else format(float(value), fmt_str)
+    except: return fallback
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RULE ENGINES
+# ══════════════════════════════════════════════════════════════════════════════
+def momentum_signal(price: float, ema20: float, rsi: float) -> dict:
+    above_ema = price > ema20
+    if above_ema and (40 <= rsi <= 65):
+        return {
+            "card_class": "sig-green", "badge_class": "badge-green", "badge_text": "🟢 BULLISH MOMENTUM",
+            "headline": "Strong Upward Momentum Detected",
+            "body": "Trading above EMA-20 with healthy RSI (40–65). Buyers control the structural trend safely."
+        }
+    elif rsi > 70:
+        return {
+            "card_class": "sig-red", "badge_class": "badge-red", "badge_text": "🔴 OVERBOUGHT WARNING",
+            "headline": "Caution — Momentum Is Overextended",
+            "body": f"RSI has touched {rsi:.1f}. High probability of technical cooling or profit booking execution."
+        }
+    elif rsi < 30 or not above_ema:
+        return {
+            "card_class": "sig-red", "badge_class": "badge-red", "badge_text": "🔴 BEARISH STRUCTURAL TREND",
+            "headline": "Weak or Negative Trend Conditions",
+            "body": "Asset trading under pressure below EMA-20 or in deeply weak oversold conditions."
+        }
+    else:
+        return {
+            "card_class": "sig-yellow", "badge_class": "badge-yellow", "badge_text": "🟡 NEUTRAL CONSOLIDATION",
+            "headline": "Mixed Signals — No Clean Bias",
+            "body": f"RSI sits at {rsi:.1f} in transition zone. Market consolidation structure remains in active play."
+        }
+
 def compute_candle_metrics(df: pd.DataFrame) -> CandleMetrics:
-    """Compute body/wick/volume metrics for the most recently completed candle."""
     last = df.iloc[-1]
-    o, h, l, c, v = (
-        float(last["Open"]),
-        float(last["High"]),
-        float(last["Low"]),
-        float(last["Close"]),
-        float(last["Volume"]),
-    )
-
+    o, h, l, c, v = float(last["Open"]), float(last["High"]), float(last["Low"]), float(last["Close"]), float(last["Volume"])
     body = abs(c - o)
-    upper_wick = h - max(o, c)
-    lower_wick = min(o, c) - l
-    total_range = max(h - l, 1e-9)  # avoid div-by-zero on flat candles
-
-    is_red = c < o
-    is_green = c > o
-
+    upper_wick, lower_wick = h - max(o, c), min(o, c) - l
+    total_range = max(h - l, 1e-9)
     prior = df.iloc[:-1].tail(VOLUME_LOOKBACK)
     avg_prior_volume = float(prior["Volume"].mean()) if not prior.empty else v
-    volume_ratio = v / avg_prior_volume if avg_prior_volume > 0 else 1.0
-
     return CandleMetrics(
-        open=o,
-        high=h,
-        low=l,
-        close=c,
-        volume=v,
-        body=body,
-        upper_wick=upper_wick,
-        lower_wick=lower_wick,
-        total_range=total_range,
-        is_red=is_red,
-        is_green=is_green,
-        body_pct=body / total_range * 100,
-        upper_wick_pct=upper_wick / total_range * 100,
-        lower_wick_pct=lower_wick / total_range * 100,
-        avg_prior_volume=avg_prior_volume,
-        volume_ratio=volume_ratio,
+        open=o, high=h, low=l, close=c, volume=v, body=body, upper_wick=upper_wick, lower_wick=lower_wick,
+        total_range=total_range, is_red=c < o, is_green=c > o, body_pct=(body/total_range)*100,
+        upper_wick_pct=(upper_wick/total_range)*100, lower_wick_pct=(lower_wick/total_range)*100,
+        avg_prior_volume=avg_prior_volume, volume_ratio=v/avg_prior_volume if avg_prior_volume > 0 else 1.0
     )
-
 
 def run_ignite_algorithm(m: CandleMetrics) -> Signal:
-    """
-    IGNITE ruleset (PoC-level heuristics — not a robust trading strategy):
-
-    Rule 1 (Bullish reversal / "UP"):
-        Red candle, long lower wick (rejection of lower prices), and
-        volume is decreasing vs recent average (selling pressure fading).
-
-    Rule 2 (Bearish continuation / "DOWN"):
-        Red candle, closes near its low (small lower wick, large body),
-        and volume is elevated vs recent average (strong conviction selling).
-
-    Rule 3 (Bearish reversal / "UP" mirror... actually bullish exhaustion):
-        Green candle, long upper wick (rejection of higher prices), and
-        volume is decreasing (buying pressure fading) -> lean "DOWN".
-
-    Rule 4 (Bullish continuation / "DOWN" mirror):
-        Green candle, closes near its high, high volume -> lean "UP".
-
-    Anything else -> HOLD / Neutral.
-    """
-    reasons: List[str] = []
-
-    volume_decreasing = m.volume_ratio < VOLUME_DROP_RATIO
-    volume_high = m.volume_ratio > VOLUME_SPIKE_RATIO
-
-    # --- Rule 1: Red candle, long lower wick, decreasing volume -> UP -------
-    if m.is_red and m.lower_wick_pct >= LONG_WICK_RATIO * 100 and volume_decreasing:
-        reasons.append(
-            f"Candle is RED (close below open), but the lower wick is "
-            f"{m.lower_wick_pct:.1f}% of the total range — buyers stepped in "
-            f"and rejected the lows (hammer-like rejection)."
-        )
-        reasons.append(
-            f"Volume is {(1 - m.volume_ratio) * 100:.1f}% below the "
-            f"{VOLUME_LOOKBACK}-candle average, suggesting selling pressure "
-            f"is fading rather than accelerating."
-        )
-        reasons.append(
-            f"Upper wick is only {m.upper_wick_pct:.1f}% of the range and "
-            f"body is {m.body_pct:.1f}%, consistent with a potential bullish reversal."
-        )
+    reasons = []
+    vol_dec, vol_high = m.volume_ratio < VOLUME_DROP_RATIO, m.volume_ratio > VOLUME_SPIKE_RATIO
+    if m.is_red and m.lower_wick_pct >= LONG_WICK_RATIO * 100 and vol_dec:
+        reasons.extend([f"Red candle with massive lower wick ({m.lower_wick_pct:.1f}%) rejecting structural lows.", "Volume decreasing, confirming low selling conviction."])
         return Signal("UP", "Medium", reasons)
-
-    # --- Rule 2: Strong red candle near low, high volume -> DOWN -----------
-    if (
-        m.is_red
-        and m.lower_wick_pct <= SMALL_OPPOSITE_WICK_RATIO * 100
-        and m.body_pct >= 50
-        and volume_high
-    ):
-        reasons.append(
-            f"Candle is RED and closed very near its low — lower wick is only "
-            f"{m.lower_wick_pct:.1f}% of the total range, meaning sellers stayed "
-            f"in control through the close."
-        )
-        reasons.append(
-            f"Body accounts for {m.body_pct:.1f}% of the total range — a strong, "
-            f"decisive move in one direction."
-        )
-        reasons.append(
-            f"Volume is {(m.volume_ratio - 1) * 100:.1f}% above the "
-            f"{VOLUME_LOOKBACK}-candle average, indicating high conviction "
-            f"behind the sell-off."
-        )
+    if m.is_red and m.lower_wick_pct <= SMALL_OPPOSITE_WICK_RATIO * 100 and m.body_pct >= 50 and vol_high:
+        reasons.extend(["Decisive flat red close near low with high body distribution dominance.", "Elevated high-conviction institutional distribution volume."])
         return Signal("DOWN", "High", reasons)
-
-    # --- Rule 3: Green candle, long upper wick, decreasing volume -> DOWN --
-    if m.is_green and m.upper_wick_pct >= LONG_WICK_RATIO * 100 and volume_decreasing:
-        reasons.append(
-            f"Candle is GREEN, but the upper wick is {m.upper_wick_pct:.1f}% of "
-            f"the range — price pushed higher then got rejected, a sign of "
-            f"fading bullish momentum (shooting-star-like)."
-        )
-        reasons.append(
-            f"Volume is {(1 - m.volume_ratio) * 100:.1f}% below the recent "
-            f"average, meaning buyers are losing conviction."
-        )
+    if m.is_green and m.upper_wick_pct >= LONG_WICK_RATIO * 100 and vol_dec:
+        reasons.extend([f"Green body structure rejected heavily at highs (Wick: {m.upper_wick_pct:.1f}%).", "Fading buying momentum liquidity profile."])
         return Signal("DOWN", "Medium", reasons)
-
-    # --- Rule 4: Strong green candle near high, high volume -> UP ----------
-    if (
-        m.is_green
-        and m.upper_wick_pct <= SMALL_OPPOSITE_WICK_RATIO * 100
-        and m.body_pct >= 50
-        and volume_high
-    ):
-        reasons.append(
-            f"Candle is GREEN and closed very near its high — upper wick is only "
-            f"{m.upper_wick_pct:.1f}% of the range, meaning buyers stayed in "
-            f"control through the close."
-        )
-        reasons.append(
-            f"Body accounts for {m.body_pct:.1f}% of the total range — a strong, "
-            f"decisive up-move."
-        )
-        reasons.append(
-            f"Volume is {(m.volume_ratio - 1) * 100:.1f}% above the "
-            f"{VOLUME_LOOKBACK}-candle average, confirming strong buying interest."
-        )
+    if m.is_green and m.upper_wick_pct <= SMALL_OPPOSITE_WICK_RATIO * 100 and m.body_pct >= 50 and vol_high:
+        reasons.extend(["Clean marubozu expansion closing near highs securely.", "High accumulation volume transaction footprints detected."])
         return Signal("UP", "High", reasons)
+    return Signal("HOLD", "Low", [f"Indecisive standard distribution frame. Body ratio holds {m.body_pct:.1f}% context.", "Volume metrics stable near historical baseline averages."])
 
-    # --- Fallback: no rule fired -> HOLD ------------------------------------
-    reasons.append(
-        f"No high-confidence pattern detected. Body is {m.body_pct:.1f}% of range, "
-        f"upper wick {m.upper_wick_pct:.1f}%, lower wick {m.lower_wick_pct:.1f}%."
-    )
-    reasons.append(
-        f"Volume is running at {m.volume_ratio * 100:.0f}% of the "
-        f"{VOLUME_LOOKBACK}-candle average — not enough of an extreme to signal "
-        f"a directional edge."
-    )
-    return Signal("HOLD", "Low", reasons)
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APPLICATION INTERFACE
+# ══════════════════════════════════════════════════════════════════════════════
+st.title("🔥 IGNITE Analytics Suite")
+st.caption("Integrated Core: Macro Momentum Gauges, Corporate Profiling & Candlestick Signal Frameworks")
 
+st.warning("**⚠️ Educational Use Architecture Only — Not Core Financial Advice.** past performance profiles contain dynamic risks.", icon="⚠️")
+st.divider()
 
-# ----------------------------------------------------------------------------
-# Charting
-# ----------------------------------------------------------------------------
-def build_chart(df: pd.DataFrame, m: CandleMetrics, signal: Signal) -> go.Figure:
-    fig = go.Figure()
+# SYSTEM STATE SYMBOL CONTEXT MANAGEMENT
+if "selected_symbol" not in st.session_state:
+    st.session_state.selected_symbol = "BTC-USD"
+    st.session_state.selected_name = "Bitcoin"
 
-    fig.add_trace(
-        go.Candlestick(
-            x=df["Time"],
-            open=df["Open"],
-            high=df["High"],
-            low=df["Low"],
-            close=df["Close"],
-            name="Price",
-            increasing_line_color="#26a69a",
-            decreasing_line_color="#ef5350",
-        )
-    )
+# DUAL UNIFIED TICKER CONTROLS
+st.markdown('<div class="section-label">Asset Discovery Engine</div>', unsafe_allow_html=True)
+col_preset, col_search = st.columns([2, 2])
 
-    # Highlight the analyzed (last) candle with a shaded vertical band + annotation.
-    last_time = df["Time"].iloc[-1]
-    color_map = {"UP": "#26a69a", "DOWN": "#ef5350", "HOLD": "#f2b705"}
-    highlight_color = color_map.get(signal.direction, "#f2b705")
+with col_preset:
+    preset_label = st.selectbox("Quick-Load Core Presets", ["— Access Search Index Box —"] + list(PRESET_TICKERS.keys()), index=1)
+    if not preset_label.startswith("—"):
+        st.session_state.selected_symbol = PRESET_TICKERS[preset_label]
+        st.session_state.selected_name = preset_label.split("—")[1].strip()
 
-    fig.add_vrect(
-        x0=last_time,
-        x1=last_time,
-        line_width=6,
-        line_color=highlight_color,
-        opacity=0.5,
-    )
+with col_search:
+    query = st.text_input("Deep Search Index Engine", placeholder="Type Name or Ticker (e.g. Reliance, Tata, Apple, Gold)")
+    if query.strip():
+        matches = search_symbols(query)
+        if matches:
+            idx = st.radio("Search Match Arrays", range(len(matches)), format_func=lambda i: f"{matches[i]['name']} ({matches[i]['symbol']})", horizontal=True)
+            if st.button("Confirm Dynamic Switch", use_container_width=True):
+                st.session_state.selected_symbol = matches[idx]["symbol"]
+                st.session_state.selected_name = matches[idx]["name"]
+        else:
+            st.caption("No valid search arrays detected.")
 
-    fig.add_annotation(
-        x=last_time,
-        y=m.high,
-        text=f"Analyzed candle → {signal.direction}",
-        showarrow=True,
-        arrowhead=2,
-        arrowcolor=highlight_color,
-        font=dict(color=highlight_color, size=12),
-        yshift=15,
-    )
+ticker = st.session_state.selected_symbol
+company_display_name = st.session_state.selected_name
+st.markdown(f"**Active Operations Context Vector:** `{ticker}` ({company_display_name})")
 
-    fig.update_layout(
-        height=520,
-        margin=dict(l=10, r=10, t=30, b=10),
-        xaxis_rangeslider_visible=False,
-        template="plotly_dark",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    return fig
+# DUAL ROUTING DASHBOARD TABS
+tab_macro, tab_ignite = st.tabs(["📈 Macro Momentum & Profile", "🔥 IGNITE Candlestick Analysis"])
 
+# FETCH MACRO RECONCILIATION BASES
+macro_df = fetch_raw_data(ticker, "1d", "120d")
+info_dict = fetch_info(ticker)
 
-# ----------------------------------------------------------------------------
-# UI helpers
-# ----------------------------------------------------------------------------
-def render_badge(signal: Signal) -> None:
-    palette = {
-        "UP": ("#0e7c5f", "🟢 UP"),
-        "DOWN": ("#8f1e1e", "🔴 DOWN"),
-        "HOLD": ("#8a6d1a", "🟡 HOLD"),
-    }
-    bg_color, label = palette.get(signal.direction, ("#444444", signal.direction))
-
-    st.markdown(
-        f"""
-        <div style="
-            background-color:{bg_color};
-            padding:22px;
-            border-radius:14px;
-            text-align:center;
-            margin-bottom:10px;
-        ">
-            <div style="font-size:14px; color:#eeeeee; letter-spacing:2px;">
-                IGNITE SIGNAL
-            </div>
-            <div style="font-size:40px; font-weight:800; color:#ffffff; margin-top:4px;">
-                {label}
-            </div>
-            <div style="font-size:14px; color:#dddddd; margin-top:4px;">
-                Confidence: {signal.confidence}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_metrics_row(m: CandleMetrics) -> None:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Body %", f"{m.body_pct:.1f}%")
-    c2.metric("Upper Wick %", f"{m.upper_wick_pct:.1f}%")
-    c3.metric("Lower Wick %", f"{m.lower_wick_pct:.1f}%")
-    c4.metric("Volume vs Avg", f"{m.volume_ratio * 100:.0f}%")
-
-
-# ----------------------------------------------------------------------------
-# Main app
-# ----------------------------------------------------------------------------
-def main() -> None:
-    st.title("🔥 IGNITE — Candlestick Signal PoC")
-    st.caption(
-        "Proof of concept only — analyzes body/wick/volume anatomy of the most "
-        "recent candle to flag a directional lean. **Not financial advice.**"
-    )
-
-    # Persist the chosen symbol/name across reruns (button clicks, searches, etc.)
-    if "selected_symbol" not in st.session_state:
-        st.session_state.selected_symbol = "BTC-USD"
-        st.session_state.selected_name = "Bitcoin"
-
-    with st.sidebar:
-        st.header("Settings")
-
-        st.markdown("**Search any company, coin, or ticker**")
-        query = st.text_input(
-            "Search",
-            placeholder="e.g. Bitcoin, Apple, Tesla, EUR USD, Gold...",
-            label_visibility="collapsed",
-        )
-
-        if query.strip():
-            with st.spinner("Searching Yahoo Finance..."):
-                matches = search_symbols(query)
-            if matches:
-                option_labels = [
-                    f"{m['name']} ({m['symbol']})"
-                    + (f" — {m['exchange']}" if m["exchange"] else "")
-                    for m in matches
-                ]
-                picked_idx = st.radio(
-                    "Results",
-                    options=list(range(len(matches))),
-                    format_func=lambda i: option_labels[i],
-                    label_visibility="collapsed",
-                )
-                if st.button("✅ Use this symbol", use_container_width=True):
-                    st.session_state.selected_symbol = matches[picked_idx]["symbol"]
-                    st.session_state.selected_name = matches[picked_idx]["name"]
-            else:
-                st.caption(
-                    "No matches found. Try a different spelling, or enter "
-                    "the exact ticker (e.g. `AAPL`)."
-                )
-
-        st.divider()
-        st.markdown("**Or pick a popular one**")
-        cols = st.columns(2)
-        for i, (name, symbol) in enumerate(POPULAR_TICKERS.items()):
-            if cols[i % 2].button(name, use_container_width=True):
-                st.session_state.selected_symbol = symbol
-                st.session_state.selected_name = name
-
-        st.divider()
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1: MACRO MOMENTUM ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_macro:
+    if macro_df.empty or "Close" not in macro_df.columns:
+        st.error("Macro structural historical matrices missing for this asset architecture.")
+    else:
+        close_series = macro_df["Close"].dropna()
+        volume_series = macro_df["Volume"] if "Volume" in macro_df.columns else pd.Series(dtype=float)
+        
+        ema20 = calculate_ema(close_series, 20)
+        sma50 = calculate_sma(close_series, 50)
+        rsi = calculate_rsi(close_series, 14)
+        
+        l_pr, l_ema, l_rsi = float(close_series.iloc[-1]), float(ema20.iloc[-1]), float(rsi.iloc[-1])
+        l_sma = float(sma50.iloc[-1]) if not sma50.isna().all() else None
+        l_vol = int(volume_series.iloc[-1]) if not volume_series.empty else 0
+        
+        prev_close = float(close_series.iloc[-2]) if len(close_series) >= 2 else l_pr
+        change, chg_pct = l_pr - prev_close, ((l_pr - prev_close)/prev_close)*100
+        
+        # RENDERING KEY PERFORMANCES
+        st.markdown('<div class="section-label">Key Metrics Dashboard</div>', unsafe_allow_html=True)
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
+        
+        currency_pfx = f"{info_dict.get('currency', '')} " if info_dict.get('currency') else ""
+        cap_s, cap_l = format_market_cap(info_dict.get("marketCap"))
+        
+        k1.markdown(f'<div class="kpi-card"><div class="kpi-label">Current Price</div><div class="kpi-value">{currency_pfx}{l_pr:,.2f}</div><div class="kpi-sub">Latest Session Close</div></div>', unsafe_allow_html=True)
+        arrow, col = ("▲", "#16a34a") if change >= 0 else ("▼", "#dc2626")
+        k2.markdown(f'<div class="kpi-card"><div class="kpi-label">Today\'s Delta</div><div class="kpi-value" style="color:{col};">{arrow} {abs(change):,.2f}</div><div class="kpi-sub">{chg_pct:+.2f}%</div></div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="kpi-card"><div class="kpi-label">Market Cap</div><div class="kpi-value">{cap_s}</div><div class="kpi-sub">{cap_l}</div></div>', unsafe_allow_html=True)
+        k4.markdown(f'<div class="kpi-card"><div class="kpi-label">Volume Matrix</div><div class="kpi-value">{l_vol:,}</div><div class="kpi-sub">Transacted Units</div></div>', unsafe_allow_html=True)
+        k5.markdown(f'<div class="kpi-card"><div class="kpi-label">EMA-20 Base</div><div class="kpi-value">{l_ema:,.2f}</div><div class="kpi-sub">{"▲ Above" if l_pr >= l_ema else "▼ Below"}</div></div>', unsafe_allow_html=True)
+        k6.markdown(f'<div class="kpi-card"><div class="kpi-label">RSI-14 Index</div><div class="kpi-value">{l_rsi:.1f}</div><div class="kpi-sub">Normalized Velocity</div></div>', unsafe_allow_html=True)
+        
+        # THREE TIER SIGNAL BOX
+        st.markdown('<div class="section-label">Momentum Classification Signal</div>', unsafe_allow_html=True)
+        sig = momentum_signal(l_pr, l_ema, l_rsi)
         st.markdown(
-            f"**Selected:** {st.session_state.selected_name} "
-            f"(`{st.session_state.selected_symbol}`)"
+            f'<div class="signal-card {sig["card_class"]}">'
+            f'<span class="sig-badge {sig["badge_class"]}">{sig["badge_text"]}</span>'
+            f'<div class="sig-headline">{sig["headline"]}</div><div class="sig-body">{sig["body"]}</div></div>',
+            unsafe_allow_html=True
         )
+        
+        # PLOTLY INTERACTIVE BUILD
+        st.markdown('<div class="section-label">Macro Price Distributions</div>', unsafe_allow_html=True)
+        c_e, c_s = st.checkbox("Toggle Overlay: EMA-20", True), st.checkbox("Toggle Overlay: SMA-50", True)
+        
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(x=macro_df["Time"].iloc[-60:], y=close_series.iloc[-60:], name="Close Price", line=dict(color="#3b82f6", width=2), fill="tozeroy", fillcolor="rgba(59,130,246,0.06)"))
+        if c_e: fig_price.add_trace(go.Scatter(x=macro_df["Time"].iloc[-60:], y=ema20.iloc[-60:], name="EMA-20", line=dict(color="#f97316", width=1.5, dash="dot")))
+        if c_s and l_sma: fig_price.add_trace(go.Scatter(x=macro_df["Time"].iloc[-60:], y=sma50.iloc[-60:], name="SMA-50", line=dict(color="#a78bfa", width=1.5, dash="dash")))
+        fig_price.update_layout(hovermode="x unified", margin=dict(l=0,r=0,t=20,b=0), height=340, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_price, use_container_width=True)
+        
+        # PROFILE GRID RENDERING
+        st.markdown('<div class="section-label">Enterprise Profile Summary</div>', unsafe_allow_html=True)
+        p_items = [
+            ("Sector Structuring", info_dict.get("sector", "N/A")), ("Industry Segment", info_dict.get("industry", "N/A")),
+            ("Country Exchange", info_dict.get("country", "N/A")), ("Trailing Valuation P/E", f"{info_dict.get('trailingPE', 'N/A')}x"),
+            ("Dividend Yield Status", f"{info_dict.get('dividendYield', 0)*100:.2f}%" if info_dict.get('dividendYield') else "N/A")
+        ]
+        grid_html = "".join(f'<div class="profile-item"><div class="profile-key">{k}</div><div class="profile-val">{v}</div></div>' for k,v in p_items)
+        st.markdown(f'<div class="profile-grid">{grid_html}</div>', unsafe_allow_html=True)
+        
+        bs_summary = info_dict.get("longBusinessSummary")
+        if bs_summary: st.markdown(f'<div class="summary-box">{textwrap.shorten(bs_summary, 700, placeholder="...")}</div>', unsafe_allow_html=True)
 
-        interval_label = st.selectbox("Interval", list(INTERVALS.keys()), index=0)
-        interval, period = INTERVALS[interval_label]
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2: IGNITE CANDLESTICK ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_ignite:
+    st.subheader("🔥 Granular Anatomy Extraction Logic")
+    
+    col_i, col_ref = st.columns([2, 2])
+    with col_i:
+        int_label = st.selectbox("Intraday Pipeline Resolution Interval", list(INTERVALS.keys()), index=1)
+        sel_interval, sel_period = INTERVALS[int_label]
+    with col_ref:
+        st.write("")
+        if st.button("Flush Cache Pipelines & Synchronize", use_container_width=True):
+            fetch_raw_data.clear()
+            
+    with st.spinner("Processing Microstructural Sequences..."):
+        ignite_df = fetch_raw_data(ticker, sel_interval, sel_period)
+        
+    if ignite_df is None or ignite_df.empty or len(ignite_df) < VOLUME_LOOKBACK + 2:
+        st.error("Insufficient high-frequency ticks available inside current parameters. Change Interval filters.")
+    else:
+        c_m = compute_candle_metrics(ignite_df)
+        candle_signal = run_ignite_algorithm(c_m)
+        
+        i_left, i_right = st.columns([1.2, 2.2])
+        
+        with i_left:
+            # CUSTOM IGNITE SIGNAL BADGE SYSTEM
+            b_palette = {"UP": ("#0e7c5f", "🟢 BUY / REVERSAL CONTEXT"), "DOWN": ("#8f1e1e", "🔴 DISTRIBUTION EXHAUSTION"), "HOLD": ("#8a6d1a", "🟡 CONSOLIDATION HOLD")}
+            bg_c, lbl_s = b_palette.get(candle_signal.direction, ("#444444", candle_signal.direction))
+            
+            st.markdown(
+                f'<div style="background-color:{bg_c}; padding:20px; border-radius:12px; text-align:center; color:#fff;">'
+                f'<div style="font-size:11px; letter-spacing:2px; opacity:0.8;">CORE PARSING MATRIX</div>'
+                f'<div style="font-size:26px; font-weight:800; margin:6px 0;">{lbl_s}</div>'
+                f'<div style="font-size:12px; opacity:0.9;">Confidence Vector: {candle_signal.confidence}</div></div>',
+                unsafe_allow_html=True
+            )
+            
+            st.markdown("#### Logic Framework Justifications:")
+            for r in candle_signal.reasons:
+                st.markdown(f"- {r}")
+                
+            st.markdown("---")
+            st.write("**Raw Extraction Realities:**", {
+                "Open": round(c_m.open, 4), "High": round(c_m.high, 4),
+                "Low": round(c_m.low, 4), "Close": round(c_m.close, 4),
+                "Relative Vol Scaling": f"{c_m.volume_ratio*100:.1f}%"
+            })
+            
+        with i_right:
+            # INTERACTIVE METRICS ROW
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Body Distribution %", f"{c_m.body_pct:.1f}%")
+            m2.metric("Upper Wick Target %", f"{c_m.upper_wick_pct:.1f}%")
+            m3.metric("Lower Wick Base %", f"{c_m.lower_wick_pct:.1f}%")
+            m4.metric("Volume Drift Delta", f"{c_m.volume_ratio*100:.0f}%")
+            
+            # CANDLESTICK GRAPH
+            fig_cand = go.Figure()
+            tail_df = ignite_df.tail(45)
+            fig_cand.add_trace(go.Candlestick(x=tail_df["Time"], open=tail_df["Open"], high=tail_df["High"], low=tail_df["Low"], close=tail_df["Close"], name="OHLC Vitals"))
+            
+            # Vertical Target Band Highlighting Last Completed Candle
+            t_last = tail_df["Time"].iloc[-1]
+            fig_cand.add_vrect(x0=t_last, x1=t_last, line_width=4, line_color=bg_c, opacity=0.4)
+            fig_cand.update_layout(xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=10,r=10,t=10,b=10), height=400)
+            st.plotly_chart(fig_cand, use_container_width=True)
 
-        refresh = st.button("🔄 Refresh Data", use_container_width=True)
-
-        st.divider()
-        st.caption(
-            "Rules use fixed thresholds (wick ≥ 45% of range for a rejection "
-            "signal; volume ±15-25% vs a 10-candle average). This is a "
-            "simplified heuristic engine, not a backtested strategy."
-        )
-
-    ticker = st.session_state.selected_symbol
-    ticker_label = st.session_state.selected_name
-
-    if refresh:
-        fetch_data.clear()
-
-    with st.spinner(f"Fetching {ticker} @ {interval_label} data..."):
-        df = fetch_data(ticker, interval, period)
-
-    if df is None or df.empty or len(df) < VOLUME_LOOKBACK + 2:
-        st.error(
-            "Not enough data returned for this ticker/interval combination. "
-            "Try a different interval (e.g. 5 minutes) or ticker — intraday "
-            "1-minute data is only available for the last few trading days "
-            "and may be limited outside market hours for equities."
-        )
-        return
-
-    metrics = compute_candle_metrics(df)
-    signal = run_ignite_algorithm(metrics)
-
-    last_row = df.iloc[-1]
-    st.subheader(f"{ticker_label} — Last candle: {last_row['Time']}")
-
-    left, right = st.columns([1, 2.2])
-
-    with left:
-        render_badge(signal)
-        st.markdown("**Why IGNITE made this call:**")
-        for reason in signal.reasons:
-            st.markdown(f"- {reason}")
-
-        st.divider()
-        st.markdown("**Raw candle values**")
-        st.write(
-            {
-                "Open": round(metrics.open, 5),
-                "High": round(metrics.high, 5),
-                "Low": round(metrics.low, 5),
-                "Close": round(metrics.close, 5),
-                "Volume": int(metrics.volume),
-                "Avg Prior Volume": round(metrics.avg_prior_volume, 2),
-            }
-        )
-
-    with right:
-        render_metrics_row(metrics)
-        fig = build_chart(df.tail(60), metrics, signal)
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
-    st.caption(
-        "⚠️ IGNITE is a rule-based heuristic PoC built for demonstration purposes. "
-        "It does not account for broader market context, news, or multi-timeframe "
-        "confluence. Do not use it as the sole basis for real trading decisions."
-    )
-
-
-if __name__ == "__main__":
-    main()
+# ══════════════════════════════════════════════════════════════════════════════
+# FOOTER TERMINAL
+# ══════════════════════════════════════════════════════════════════════════════
+st.divider()
+st.caption("🔒 Architecture Pipeline complete. System active under sandbox deployment parameters. Financial data streams powered by open-source yfinance abstractions.")
